@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">VirtualCAmer</string>
+    <string name="status_missing_url">Status: missing RTMP URL</string>
+    <string name="status_connecting">Status: connecting</string>
+    <string name="status_buffering">Status: buffering</string>
+    <string name="status_ready">Status: ready</string>
+    <string name="status_ended">Status: ended</string>
+    <string name="status_idle">Status: idle</string>
+    <string name="status_playing">Status: playing</string>
+    <string name="status_paused">Status: paused</string>
 </resources>

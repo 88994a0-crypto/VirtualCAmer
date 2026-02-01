@@ -24,10 +24,14 @@ import com.google.android.exoplayer2.mediacodec.MediaCodecUtil
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
 import com.google.android.exoplayer2.upstream.rtmp.RtmpDataSource
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
     private lateinit var serverInput: EditText
     private lateinit var streamKeyInput: EditText
+    private lateinit var devicePathInput: EditText
     private lateinit var audioSwitch: SwitchMaterial
     private lateinit var videoSwitch: SwitchMaterial
     private lateinit var liveSwitch: SwitchMaterial
@@ -50,6 +54,7 @@ class MainActivity : AppCompatActivity() {
 
         serverInput = findViewById(R.id.serverInput)
         streamKeyInput = findViewById(R.id.streamKeyInput)
+        devicePathInput = findViewById(R.id.devicePathInput)
         audioSwitch = findViewById(R.id.audioSwitch)
         videoSwitch = findViewById(R.id.videoSwitch)
         liveSwitch = findViewById(R.id.liveSwitch)
@@ -114,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
         lastStreamUrl = rtmpUrl
         val requestedMode = if (hardDecode.isChecked) DecoderMode.HARDWARE else DecoderMode.SOFTWARE
+        frameForwarder.updateDevicePath(devicePathInput.text.toString().trim())
         switchDecoderMode(requestedMode)
         updateTrackSelection()
         togglePlayback(liveSwitch.isChecked)
@@ -179,7 +185,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prepareMedia(mediaItem: MediaItem) {
-        val dataSourceFactory = RtmpDataSource.Factory()
+        val dataSourceFactory: RtmpDataSourceFactory = RtmpDataSource.Factory()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(mediaItem)
 
@@ -263,6 +269,10 @@ class MainActivity : AppCompatActivity() {
     private class ExoFrameForwarder(
         private val virtualCameraBridge: VirtualCameraBridge
     ) : SurfaceTexture.OnFrameAvailableListener {
+        fun updateDevicePath(path: String) {
+            virtualCameraBridge.configureDevice(path)
+        }
+
         override fun onFrameAvailable(surfaceTexture: SurfaceTexture) {
             val timestampNs = surfaceTexture.timestamp
             virtualCameraBridge.sendFrame(surfaceTexture, timestampNs)
@@ -271,16 +281,46 @@ class MainActivity : AppCompatActivity() {
 
     private class VirtualCameraBridge {
         private var devicePath: String = "/dev/video0"
+        private var outputStream: FileOutputStream? = null
 
         fun configureDevice(path: String) {
-            devicePath = path
+            if (path.isNotBlank()) {
+                devicePath = path
+            }
+            reconnect()
+        }
+
+        private fun reconnect() {
+            outputStream?.closeQuietly()
+            outputStream = null
+            val deviceFile = File(devicePath)
+            if (!deviceFile.exists()) {
+                Log.w(TAG, "Virtual camera device not found at $devicePath")
+                return
+            }
+            try {
+                outputStream = FileOutputStream(deviceFile)
+            } catch (error: IOException) {
+                Log.e(TAG, "Failed to open virtual camera device at $devicePath", error)
+            }
         }
 
         fun sendFrame(surfaceTexture: SurfaceTexture, timestampNs: Long) {
             Log.d(TAG, "Forwarding frame to virtual camera at $timestampNs for $devicePath")
+            if (outputStream == null) {
+                reconnect()
+            }
             // TODO: Use OpenGL/EGL to read the SurfaceTexture and output raw frames.
             // TODO: Implement a native bridge that uses v4l2loopback to stream frames to /dev/videoX.
             // TODO: Pipe frames using V4L2 ioctls (VIDIOC_QBUF/VIDIOC_DQBUF) for the virtual camera.
+        }
+
+        private fun FileOutputStream.closeQuietly() {
+            try {
+                close()
+            } catch (_: IOException) {
+                Unit
+            }
         }
     }
 
@@ -294,6 +334,8 @@ class MainActivity : AppCompatActivity() {
         HARDWARE,
         SOFTWARE
     }
+
+    private typealias RtmpDataSourceFactory = RtmpDataSource.Factory
 
     companion object {
         private const val TAG = "MainActivity"

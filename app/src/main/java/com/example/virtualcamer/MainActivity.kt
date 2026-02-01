@@ -155,13 +155,15 @@ class MainActivity : AppCompatActivity() {
             }
             updateStatus("$deviceIssue. $detail")
             stopFrameCapture()
+            stopPlayback()
             bridge.closeDevice()
             return
         }
 
         if (!bridge.openDevice(devicePath)) {
-            updateStatus("Unable to open $devicePath (check permissions and path)")
+            updateStatus("Unable to open $devicePath (virtual camera creation failed)")
             stopFrameCapture()
+            stopPlayback()
             return
         }
 
@@ -299,11 +301,11 @@ class MainActivity : AppCompatActivity() {
             bitmap,
             { result ->
                 if (result == android.view.PixelCopy.SUCCESS) {
-                    val success = frameWriter.writeBitmap(bitmap)
-                    if (!success && !frameWriteFailed) {
+                    val result = frameWriter.writeBitmap(bitmap)
+                    if (!result.success && !frameWriteFailed) {
                         frameWriteFailed = true
-                        updateStatus("Failed to forward frame to virtual camera")
-                    } else if (success && frameWriteFailed) {
+                        updateStatus(result.message ?: "Failed to forward frame to virtual camera")
+                    } else if (result.success && frameWriteFailed) {
                         frameWriteFailed = false
                         updateStatus("Virtual camera streaming recovered")
                     }
@@ -353,7 +355,9 @@ class MainActivity : AppCompatActivity() {
 
     private val playerListener = object : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
-            updateStatus("Playback error: ${error.errorCodeName}")
+            val detail = error.message ?: error.cause?.message
+            val suffix = if (detail.isNullOrBlank()) "" else " ($detail)"
+            updateStatus("Playback error: ${error.errorCodeName}$suffix")
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -361,6 +365,7 @@ class MainActivity : AppCompatActivity() {
                 Player.STATE_BUFFERING -> updateStatus("Buffering RTMP stream...")
                 Player.STATE_READY -> updateStatus("RTMP stream ready")
                 Player.STATE_ENDED -> updateStatus("RTMP stream ended")
+                Player.STATE_IDLE -> updateStatus("RTMP stream idle")
             }
         }
 

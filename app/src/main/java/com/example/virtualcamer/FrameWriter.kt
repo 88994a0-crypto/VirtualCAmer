@@ -1,21 +1,35 @@
 package com.example.virtualcamer
 
 import android.graphics.Bitmap
+import android.util.Log
+import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
-import java.nio.ByteBuffer
 
 class FrameWriter(private val bridge: VirtualCameraBridge) {
     fun writeBitmap(bitmap: Bitmap): Boolean {
-        if (!bridge.configureStream(bitmap.width, bitmap.height)) {
+        val adjusted = ensureEvenDimensions(bitmap)
+        if (adjusted == null) {
+            Log.e("VirtualCamera", "Invalid bitmap dimensions: ${bitmap.width}x${bitmap.height}")
             return false
         }
-        val buffer = convertArgbToI420(bitmap)
-        if (buffer == null) {
-            return false
+        return try {
+            val buffer = convertArgbToI420(adjusted)
+            if (buffer == null) {
+                Log.e("VirtualCamera", "Failed to convert frame to I420")
+                return false
+            }
+            if (!bridge.configureStream(adjusted.width, adjusted.height)) {
+                Log.e("VirtualCamera", "Failed to configure stream ${adjusted.width}x${adjusted.height}")
+                return false
+            }
+            buffer.rewind()
+            bridge.writeFrame(buffer)
+        } finally {
+            if (adjusted !== bitmap) {
+                adjusted.recycle()
+            }
         }
-        buffer.rewind()
-        return bridge.writeFrame(buffer)
     }
 
     private fun convertArgbToI420(bitmap: Bitmap): ByteBuffer? {
@@ -62,6 +76,20 @@ class FrameWriter(private val bridge: VirtualCameraBridge) {
         buffer.put(uPlane)
         buffer.put(vPlane)
         return buffer
+    }
+
+    private fun ensureEvenDimensions(bitmap: Bitmap): Bitmap? {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width <= 1 || height <= 1) {
+            return null
+        }
+        val evenWidth = width - (width % 2)
+        val evenHeight = height - (height % 2)
+        if (evenWidth == width && evenHeight == height) {
+            return bitmap
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, evenWidth, evenHeight)
     }
 
     private fun clampToByte(value: Int): Byte {

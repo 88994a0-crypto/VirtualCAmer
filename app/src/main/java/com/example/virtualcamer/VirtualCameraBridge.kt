@@ -5,6 +5,8 @@ import java.nio.ByteBuffer
 
 class VirtualCameraBridge {
     private var deviceHandle: Long = 0
+    private var configuredWidth: Int = 0
+    private var configuredHeight: Int = 0
 
     init {
         try {
@@ -17,6 +19,8 @@ class VirtualCameraBridge {
     fun openDevice(path: String): Boolean {
         closeDevice()
         deviceHandle = nativeOpenDevice(path)
+        configuredWidth = 0
+        configuredHeight = 0
         return deviceHandle != 0L
     }
 
@@ -25,6 +29,21 @@ class VirtualCameraBridge {
             return false
         }
         return nativeWriteFrame(deviceHandle, buffer, buffer.remaining())
+    }
+
+    fun configureStream(width: Int, height: Int): Boolean {
+        if (deviceHandle == 0L || width <= 0 || height <= 0) {
+            return false
+        }
+        if (width == configuredWidth && height == configuredHeight) {
+            return true
+        }
+        val success = nativeConfigureStream(deviceHandle, width, height)
+        if (success) {
+            configuredWidth = width
+            configuredHeight = height
+        }
+        return success
     }
 
     fun closeDevice() {
@@ -37,6 +56,8 @@ class VirtualCameraBridge {
     private external fun nativeOpenDevice(path: String): Long
 
     private external fun nativeWriteFrame(handle: Long, buffer: ByteBuffer, length: Int): Boolean
+
+    private external fun nativeConfigureStream(handle: Long, width: Int, height: Int): Boolean
 
     private external fun nativeCloseDevice(handle: Long)
 }

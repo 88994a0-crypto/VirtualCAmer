@@ -24,7 +24,11 @@ class FrameWriter(private val bridge: VirtualCameraBridge) {
                 return false
             }
             buffer.rewind()
-            bridge.writeFrame(buffer)
+            val success = bridge.writeFrame(buffer)
+            if (!success) {
+                Log.e("VirtualCamera", "Failed to write frame to virtual camera")
+            }
+            success
         } finally {
             if (adjusted !== bitmap) {
                 adjusted.recycle()

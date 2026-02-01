@@ -6,22 +6,30 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import android.view.TextureView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
+import com.google.android.exoplayer2.Player
+import com.google.android.exoplayer2.PlaybackException
 import com.google.android.exoplayer2.audio.AudioAttributes
 import com.google.android.exoplayer2.DefaultRenderersFactory
+import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.mediacodec.MediaCodecUtil
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
 import com.google.android.material.switchmaterial.SwitchMaterial
+import java.net.InetAddress
+import java.net.URI
 import java.util.concurrent.Executors
+import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
     private lateinit var serverInput: EditText
@@ -38,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoPreview: TextureView
 
     private val rootExecutor = Executors.newSingleThreadExecutor()
+    private val ioExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val frameThread = HandlerThread("FrameCapture")
     private lateinit var frameHandler: Handler
@@ -49,6 +58,8 @@ class MainActivity : AppCompatActivity() {
     private var decoderMode: DecoderMode = DecoderMode.SOFTWARE
     private var activeDecoderMode: DecoderMode? = null
     private var frameWriteFailed = false
+    private var frameIntervalMs = 66L
+    private var lastFrameCaptureTime = 0L
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -95,6 +106,7 @@ class MainActivity : AppCompatActivity() {
         bridge.closeDevice()
         frameThread.quitSafely()
         rootExecutor.shutdown()
+        ioExecutor.shutdown()
     }
 
     private fun requestRuntimePermissions() {
@@ -127,9 +139,21 @@ class MainActivity : AppCompatActivity() {
                 "video=${videoSwitch.isChecked}, live=${liveSwitch.isChecked})"
         )
 
+        if (!ensurePermissionsGranted()) {
+            stopFrameCapture()
+            stopPlayback()
+            return
+        }
+
         val deviceIssue = setupManager.getDeviceIssue(devicePath)
         if (deviceIssue != null) {
-            updateStatus(deviceIssue)
+            val available = setupManager.listDevicePaths()
+            val detail = if (available.isNotEmpty()) {
+                "Available devices: ${available.joinToString()}"
+            } else {
+                "No /dev/video* devices found"
+            }
+            updateStatus("$deviceIssue. $detail")
             stopFrameCapture()
             bridge.closeDevice()
             return
@@ -141,7 +165,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (liveSwitch.isChecked && rtmpUrl.isNotBlank()) {
+        val rtmpIssue = if (liveSwitch.isChecked) validateRtmpInputs(serverUrl, streamKey) else null
+        if (rtmpIssue != null) {
+            updateStatus(rtmpIssue)
+            stopPlayback()
+        } else if (liveSwitch.isChecked && rtmpUrl.isNotBlank()) {
             startPlayback(rtmpUrl)
         } else {
             stopPlayback()
@@ -161,6 +189,27 @@ class MainActivity : AppCompatActivity() {
         }
         val separator = if (serverUrl.endsWith("/")) "" else "/"
         return if (streamKey.isBlank()) serverUrl else "$serverUrl$separator$streamKey"
+    }
+
+    private fun validateRtmpInputs(serverUrl: String, streamKey: String): String? {
+        if (serverUrl.isBlank()) {
+            return "RTMP server URL is required when live streaming is enabled"
+        }
+        return try {
+            val uri = URI(serverUrl)
+            val scheme = uri.scheme?.lowercase()
+            if (scheme != "rtmp" && scheme != "rtmps") {
+                "RTMP server URL must start with rtmp:// or rtmps://"
+            } else if (uri.host.isNullOrBlank()) {
+                "RTMP server URL is missing a host"
+            } else if (streamKey.isBlank() && !serverUrl.endsWith("/")) {
+                "Stream key is empty. Add a stream key or include it in the RTMP URL"
+            } else {
+                null
+            }
+        } catch (exception: Exception) {
+            "RTMP server URL is invalid: ${exception.message ?: "unknown error"}"
+        }
     }
 
     private fun startPlayback(rtmpUrl: String) {
@@ -184,10 +233,19 @@ class MainActivity : AppCompatActivity() {
         playerInstance.setMediaItem(MediaItem.fromUri(rtmpUrl))
         playerInstance.prepare()
         playerInstance.playWhenReady = liveSwitch.isChecked
+        checkRtmpReachability(rtmpUrl)
     }
 
     private fun buildPlayer(mode: DecoderMode): ExoPlayer {
         val trackSelector = DefaultTrackSelector(this)
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                1500,
+                2000
+            )
+            .build()
         val renderersFactory = DefaultRenderersFactory(this).setMediaCodecSelector { mimeType, requiresSecure, requiresTunneling ->
             val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecure, requiresTunneling)
             when (mode) {
@@ -197,7 +255,9 @@ class MainActivity : AppCompatActivity() {
         }
         return ExoPlayer.Builder(this, renderersFactory)
             .setTrackSelector(trackSelector)
+            .setLoadControl(loadControl)
             .build()
+            .also { it.addListener(playerListener) }
     }
 
     private fun stopPlayback() {
@@ -218,11 +278,16 @@ class MainActivity : AppCompatActivity() {
             if (videoSwitch.isChecked && videoPreview.isAvailable) {
                 captureFrame()
             }
-            frameHandler.postDelayed(this, 200)
+            frameHandler.postDelayed(this, frameIntervalMs)
         }
     }
 
     private fun captureFrame() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastFrameCaptureTime < frameIntervalMs) {
+            return
+        }
+        lastFrameCaptureTime = now
         val width = videoPreview.width
         val height = videoPreview.height
         if (width <= 0 || height <= 0) {
@@ -252,6 +317,58 @@ class MainActivity : AppCompatActivity() {
     private fun updateStatus(message: String) {
         runOnUiThread {
             statusText.text = "Status: $message"
+        }
+    }
+
+    private fun ensurePermissionsGranted(): Boolean {
+        val missing = listOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA
+        ).filter { ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+
+        if (missing.isNotEmpty()) {
+            updateStatus("Missing permissions: ${missing.joinToString()}")
+            return false
+        }
+        return true
+    }
+
+    private fun checkRtmpReachability(rtmpUrl: String) {
+        val host = try {
+            URI(rtmpUrl).host
+        } catch (exception: Exception) {
+            null
+        }
+        if (host.isNullOrBlank()) {
+            return
+        }
+        ioExecutor.execute {
+            try {
+                InetAddress.getByName(host)
+            } catch (exception: Exception) {
+                updateStatus("Unable to resolve RTMP host: $host")
+            }
+        }
+    }
+
+    private val playerListener = object : Player.Listener {
+        override fun onPlayerError(error: PlaybackException) {
+            updateStatus("Playback error: ${error.errorCodeName}")
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            when (playbackState) {
+                Player.STATE_BUFFERING -> updateStatus("Buffering RTMP stream...")
+                Player.STATE_READY -> updateStatus("RTMP stream ready")
+                Player.STATE_ENDED -> updateStatus("RTMP stream ended")
+            }
+        }
+
+        override fun onTracksChanged(tracks: Player.Tracks) {
+            val frameRate = player?.videoFormat?.frameRate ?: 0f
+            if (frameRate > 0f) {
+                frameIntervalMs = max(16L, (1000f / frameRate).toLong())
+            }
         }
     }
 }

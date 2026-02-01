@@ -16,8 +16,12 @@ auto-selects the first available `/dev/video*` path (preferring `/dev/video0`). 
 the detected device path in the UI if you need to.
 
 When the app is running, it opens the device and forwards decoded frames into it through a JNI bridge.
-The native module currently performs a raw write of ARGB frames into the device file, so the output
-format may need refinement to match your v4l2loopback expectations.
+Frames captured from ExoPlayer are converted from ARGB into planar YUV420 (I420) in Kotlin before they
+are written to the virtual camera. The native module configures the v4l2loopback stream for YUV420 and
+validates the expected frame size.
+
+If root access is unavailable or the module cannot be loaded, the app reports the failure and leaves
+the device path unchanged so you can retry with a manually provisioned virtual camera.
 
 ## Build
 Use Android Studio or Gradle:

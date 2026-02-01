@@ -19,6 +19,8 @@ import com.google.android.exoplayer2.DefaultRenderersFactory
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.Player
+import com.google.android.exoplayer2.mediacodec.MediaCodecSelector
+import com.google.android.exoplayer2.mediacodec.MediaCodecUtil
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
 import com.google.android.exoplayer2.upstream.rtmp.RtmpDataSource
@@ -39,6 +41,8 @@ class MainActivity : AppCompatActivity() {
     private var trackSelector: DefaultTrackSelector? = null
     private var videoSurface: Surface? = null
     private val frameForwarder = ExoFrameForwarder(VirtualCameraBridge())
+    private var lastStreamUrl: String? = null
+    private var decoderMode: DecoderMode? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +66,16 @@ class MainActivity : AppCompatActivity() {
         audioSwitch.setOnCheckedChangeListener { _, _ -> updateTrackSelection() }
         videoSwitch.setOnCheckedChangeListener { _, _ -> updateTrackSelection() }
         liveSwitch.setOnCheckedChangeListener { _, isChecked -> togglePlayback(isChecked) }
+        softDecode.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                switchDecoderMode(DecoderMode.SOFTWARE)
+            }
+        }
+        hardDecode.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                switchDecoderMode(DecoderMode.HARDWARE)
+            }
+        }
 
         videoPreview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
@@ -98,18 +112,37 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val useHardwareDecoder = hardDecode.isChecked
-        buildPlayer(useHardwareDecoder)
-        prepareMedia(rtmpUrl)
+        lastStreamUrl = rtmpUrl
+        val requestedMode = if (hardDecode.isChecked) DecoderMode.HARDWARE else DecoderMode.SOFTWARE
+        switchDecoderMode(requestedMode)
         updateTrackSelection()
         togglePlayback(liveSwitch.isChecked)
     }
 
-    private fun buildPlayer(useHardwareDecoder: Boolean) {
+    private fun buildPlayer(mode: DecoderMode, snapshot: PlaybackSnapshot?) {
         releasePlayer()
 
+        val codecSelector = MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+            val decoderInfos = MediaCodecUtil.getDecoderInfos(
+                mimeType,
+                requiresSecureDecoder,
+                requiresTunnelingDecoder
+            )
+            when (mode) {
+                DecoderMode.HARDWARE -> decoderInfos.filterNot { info ->
+                    info.name.contains("sw", ignoreCase = true) ||
+                        info.name.contains("software", ignoreCase = true)
+                }.ifEmpty { decoderInfos }
+                DecoderMode.SOFTWARE -> decoderInfos.filter { info ->
+                    info.name.contains("sw", ignoreCase = true) ||
+                        info.name.contains("software", ignoreCase = true)
+                }.ifEmpty { decoderInfos }
+            }
+        }
+
         val rendererFactory = DefaultRenderersFactory(this)
-            .setEnableDecoderFallback(!useHardwareDecoder)
+            .setMediaCodecSelector(codecSelector)
+            .setEnableDecoderFallback(true)
 
         trackSelector = DefaultTrackSelector(this)
         player = ExoPlayer.Builder(this)
@@ -132,12 +165,20 @@ class MainActivity : AppCompatActivity() {
             videoSurface = Surface(videoPreview.surfaceTexture)
             player?.setVideoSurface(videoSurface)
         }
+
+        if (snapshot != null) {
+            restorePlayback(snapshot)
+        }
     }
 
     private fun prepareMedia(rtmpUrl: String) {
         val uri = Uri.parse(rtmpUrl)
         val mediaItem = MediaItem.fromUri(uri)
 
+        prepareMedia(mediaItem)
+    }
+
+    private fun prepareMedia(mediaItem: MediaItem) {
         val dataSourceFactory = RtmpDataSource.Factory()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(mediaItem)
@@ -145,6 +186,39 @@ class MainActivity : AppCompatActivity() {
         player?.setMediaSource(mediaSource)
         player?.prepare()
         statusText.text = getString(R.string.status_connecting)
+    }
+
+    private fun restorePlayback(snapshot: PlaybackSnapshot) {
+        prepareMedia(snapshot.mediaItem)
+        if (snapshot.positionMs > 0) {
+            player?.seekTo(snapshot.positionMs)
+        }
+        player?.playWhenReady = snapshot.playWhenReady
+    }
+
+    private fun switchDecoderMode(requestedMode: DecoderMode) {
+        if (decoderMode == requestedMode && player != null) {
+            return
+        }
+        val snapshot = capturePlaybackSnapshot()
+        decoderMode = requestedMode
+        buildPlayer(requestedMode, snapshot)
+        if (snapshot == null) {
+            val url = lastStreamUrl
+            if (!url.isNullOrBlank()) {
+                prepareMedia(url)
+            }
+        }
+    }
+
+    private fun capturePlaybackSnapshot(): PlaybackSnapshot? {
+        val currentPlayer = player ?: return null
+        val mediaItem = currentPlayer.currentMediaItem ?: return null
+        return PlaybackSnapshot(
+            mediaItem = mediaItem,
+            positionMs = currentPlayer.currentPosition,
+            playWhenReady = currentPlayer.playWhenReady
+        )
     }
 
     private fun updateTrackSelection() {
@@ -196,11 +270,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private class VirtualCameraBridge {
-        fun sendFrame(surfaceTexture: SurfaceTexture, timestampNs: Long) {
-            Log.d(TAG, "Forwarding frame to virtual camera at $timestampNs")
-            // TODO: Use OpenGL or native APIs to read the SurfaceTexture and push the frame
-            // into the virtual camera pipeline for external apps (Zoom, Meet, etc.).
+        private var devicePath: String = "/dev/video0"
+
+        fun configureDevice(path: String) {
+            devicePath = path
         }
+
+        fun sendFrame(surfaceTexture: SurfaceTexture, timestampNs: Long) {
+            Log.d(TAG, "Forwarding frame to virtual camera at $timestampNs for $devicePath")
+            // TODO: Use OpenGL/EGL to read the SurfaceTexture and output raw frames.
+            // TODO: Implement a native bridge that uses v4l2loopback to stream frames to /dev/videoX.
+            // TODO: Pipe frames using V4L2 ioctls (VIDIOC_QBUF/VIDIOC_DQBUF) for the virtual camera.
+        }
+    }
+
+    private data class PlaybackSnapshot(
+        val mediaItem: MediaItem,
+        val positionMs: Long,
+        val playWhenReady: Boolean
+    )
+
+    private enum class DecoderMode {
+        HARDWARE,
+        SOFTWARE
     }
 
     companion object {

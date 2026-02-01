@@ -8,4 +8,7 @@
     <string name="status_idle">Status: idle</string>
     <string name="status_playing">Status: playing</string>
     <string name="status_paused">Status: paused</string>
+    <string name="status_virtual_camera_failed">Status: virtual camera setup failed (root required)</string>
+    <string name="status_virtual_camera_ready">Status: virtual camera ready at %1$s</string>
+    <string name="status_virtual_camera_missing">Status: virtual camera missing at %1$s</string>
 </resources>

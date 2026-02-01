@@ -24,9 +24,11 @@ import com.google.android.exoplayer2.mediacodec.MediaCodecUtil
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
 import com.google.android.exoplayer2.upstream.rtmp.RtmpDataSource
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStreamReader
 
 class MainActivity : AppCompatActivity() {
     private lateinit var serverInput: EditText
@@ -64,6 +66,8 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         videoPreview = findViewById(R.id.videoPreview)
 
+        setupVirtualCamera()
+
         audioSwitch.isChecked = true
         videoSwitch.isChecked = true
 
@@ -82,6 +86,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        frameForwarder.setTextureView(videoPreview)
         videoPreview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                 surfaceTexture.setOnFrameAvailableListener(
@@ -108,6 +113,27 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         releasePlayer()
+    }
+
+    private fun setupVirtualCamera() {
+        val setupResult = RootCommandRunner.runAsRoot(
+            "modprobe v4l2loopback devices=1 video_nr=0 card_label=\"Camera\" exclusive_caps=1"
+        )
+        if (!setupResult.success) {
+            Log.w(TAG, "Virtual camera setup failed: ${setupResult.output}")
+            statusText.text = getString(R.string.status_virtual_camera_failed)
+            return
+        }
+
+        val devicePath = devicePathInput.text.toString().trim().ifBlank { "/dev/video0" }
+        val deviceFile = File(devicePath)
+        if (deviceFile.exists()) {
+            Log.i(TAG, "Virtual camera device ready at $devicePath")
+            statusText.text = getString(R.string.status_virtual_camera_ready, devicePath)
+        } else {
+            Log.w(TAG, "Virtual camera device missing at $devicePath")
+            statusText.text = getString(R.string.status_virtual_camera_missing, devicePath)
+        }
     }
 
     private fun applySettings() {
@@ -264,18 +290,34 @@ class MainActivity : AppCompatActivity() {
         trackSelector = null
         videoSurface?.release()
         videoSurface = null
+        frameForwarder.clear()
     }
 
     private class ExoFrameForwarder(
         private val virtualCameraBridge: VirtualCameraBridge
     ) : SurfaceTexture.OnFrameAvailableListener {
+        private var textureView: TextureView? = null
+
+        fun setTextureView(view: TextureView) {
+            textureView = view
+        }
+
         fun updateDevicePath(path: String) {
             virtualCameraBridge.configureDevice(path)
         }
 
         override fun onFrameAvailable(surfaceTexture: SurfaceTexture) {
             val timestampNs = surfaceTexture.timestamp
-            virtualCameraBridge.sendFrame(surfaceTexture, timestampNs)
+            val bitmap = textureView?.bitmap
+            if (bitmap == null) {
+                Log.w(TAG, "Frame available but no bitmap to forward")
+                return
+            }
+            virtualCameraBridge.sendFrame(bitmap, timestampNs)
+        }
+
+        fun clear() {
+            textureView = null
         }
     }
 
@@ -305,14 +347,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        fun sendFrame(surfaceTexture: SurfaceTexture, timestampNs: Long) {
+        fun sendFrame(bitmap: android.graphics.Bitmap, timestampNs: Long) {
             Log.d(TAG, "Forwarding frame to virtual camera at $timestampNs for $devicePath")
             if (outputStream == null) {
                 reconnect()
             }
-            // TODO: Use OpenGL/EGL to read the SurfaceTexture and output raw frames.
-            // TODO: Implement a native bridge that uses v4l2loopback to stream frames to /dev/videoX.
-            // TODO: Pipe frames using V4L2 ioctls (VIDIOC_QBUF/VIDIOC_DQBUF) for the virtual camera.
+            val stream = outputStream ?: return
+            val width = bitmap.width
+            val height = bitmap.height
+            val argb = IntArray(width * height)
+            bitmap.getPixels(argb, 0, width, 0, 0, width, height)
+
+            val yuv = YuvConverter.convertArgbToI420(argb, width, height)
+            try {
+                stream.write(yuv)
+            } catch (error: IOException) {
+                Log.e(TAG, "Failed to write frame to virtual camera", error)
+            }
         }
 
         private fun FileOutputStream.closeQuietly() {
@@ -339,5 +390,67 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+    }
+}
+
+private object YuvConverter {
+    fun convertArgbToI420(argb: IntArray, width: Int, height: Int): ByteArray {
+        val frameSize = width * height
+        val yuv = ByteArray(frameSize + (frameSize / 2))
+        var yIndex = 0
+        var uIndex = frameSize
+        var vIndex = frameSize + frameSize / 4
+
+        for (j in 0 until height) {
+            for (i in 0 until width) {
+                val color = argb[j * width + i]
+                val r = (color shr 16) and 0xff
+                val g = (color shr 8) and 0xff
+                val b = color and 0xff
+
+                val y = ((66 * r + 129 * g + 25 * b + 128) shr 8) + 16
+                val u = ((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128
+                val v = ((112 * r - 94 * g - 18 * b + 128) shr 8) + 128
+
+                yuv[yIndex++] = clampToByte(y)
+                if (j % 2 == 0 && i % 2 == 0) {
+                    yuv[uIndex++] = clampToByte(u)
+                    yuv[vIndex++] = clampToByte(v)
+                }
+            }
+        }
+        return yuv
+    }
+
+    private fun clampToByte(value: Int): Byte {
+        return when {
+            value < 0 -> 0
+            value > 255 -> 255
+            else -> value
+        }.toByte()
+    }
+}
+
+private object RootCommandRunner {
+    data class Result(val success: Boolean, val output: String)
+
+    fun runAsRoot(command: String): Result {
+        return runCommand(listOf("su", "-c", command))
+    }
+
+    private fun runCommand(command: List<String>): Result {
+        return try {
+            val process = ProcessBuilder(command).redirectErrorStream(true).start()
+            val output = BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                reader.readText()
+            }
+            val exitCode = process.waitFor()
+            Result(exitCode == 0, output.trim())
+        } catch (error: IOException) {
+            Result(false, error.message ?: "Unknown error")
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Result(false, "Interrupted while running command")
+        }
     }
 }

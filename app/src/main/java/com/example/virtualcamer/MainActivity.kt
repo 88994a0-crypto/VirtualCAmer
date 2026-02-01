@@ -17,6 +17,9 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.audio.AudioAttributes
+import com.google.android.exoplayer2.DefaultRenderersFactory
+import com.google.android.exoplayer2.mediacodec.MediaCodecUtil
+import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
 import com.google.android.material.switchmaterial.SwitchMaterial
 import java.util.concurrent.Executors
 
@@ -43,6 +46,8 @@ class MainActivity : AppCompatActivity() {
     private val bridge = VirtualCameraBridge()
     private val frameWriter = FrameWriter(bridge)
     private lateinit var setupManager: DeviceSetupManager
+    private var decoderMode: DecoderMode = DecoderMode.SOFTWARE
+    private var activeDecoderMode: DecoderMode? = null
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -109,15 +114,15 @@ class MainActivity : AppCompatActivity() {
         }
         devicePathInput.setText(devicePath)
 
-        val decoderMode = if (decoderGroup.checkedRadioButtonId == hardDecode.id) {
-            "hardware"
+        decoderMode = if (decoderGroup.checkedRadioButtonId == hardDecode.id) {
+            DecoderMode.HARDWARE
         } else {
-            "software"
+            DecoderMode.SOFTWARE
         }
 
         val rtmpUrl = buildRtmpUrl(serverUrl, streamKey)
         updateStatus(
-            "Applying settings for $rtmpUrl (decoder=$decoderMode, audio=${audioSwitch.isChecked}, " +
+            "Applying settings for $rtmpUrl (decoder=${decoderMode.label}, audio=${audioSwitch.isChecked}, " +
                 "video=${videoSwitch.isChecked}, live=${liveSwitch.isChecked})"
         )
 
@@ -147,8 +152,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startPlayback(rtmpUrl: String) {
-        val playerInstance = player ?: ExoPlayer.Builder(this).build().also {
-            player = it
+        val playerInstance = if (player == null || activeDecoderMode != decoderMode) {
+            player?.release()
+            buildPlayer(decoderMode).also {
+                player = it
+                activeDecoderMode = decoderMode
+            }
+        } else {
+            player!!
         }
 
         val audioAttributes =
@@ -161,6 +172,20 @@ class MainActivity : AppCompatActivity() {
         playerInstance.setMediaItem(MediaItem.fromUri(rtmpUrl))
         playerInstance.prepare()
         playerInstance.playWhenReady = liveSwitch.isChecked
+    }
+
+    private fun buildPlayer(mode: DecoderMode): ExoPlayer {
+        val trackSelector = DefaultTrackSelector(this)
+        val renderersFactory = DefaultRenderersFactory(this).setMediaCodecSelector { mimeType, requiresSecure, requiresTunneling ->
+            val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecure, requiresTunneling)
+            when (mode) {
+                DecoderMode.SOFTWARE -> infos.filter { it.isSoftwareOnly }.ifEmpty { infos }
+                DecoderMode.HARDWARE -> infos.filter { it.isHardwareAccelerated }.ifEmpty { infos }
+            }
+        }
+        return ExoPlayer.Builder(this, renderersFactory)
+            .setTrackSelector(trackSelector)
+            .build()
     }
 
     private fun stopPlayback() {
@@ -210,4 +235,9 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Status: $message"
         }
     }
+}
+
+private enum class DecoderMode(val label: String) {
+    SOFTWARE("software"),
+    HARDWARE("hardware")
 }

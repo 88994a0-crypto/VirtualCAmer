@@ -61,10 +61,11 @@ Java_com_example_virtualcamer_VirtualCameraBridge_nativeConfigureStream(
     format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
     format.fmt.pix.width = static_cast<uint32_t>(width);
     format.fmt.pix.height = static_cast<uint32_t>(height);
-    format.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB32;
+    format.fmt.pix.pixelformat = V4L2_PIX_FMT_YUV420;
     format.fmt.pix.field = V4L2_FIELD_NONE;
-    format.fmt.pix.bytesperline = static_cast<uint32_t>(width) * 4;
-    format.fmt.pix.sizeimage = format.fmt.pix.bytesperline * static_cast<uint32_t>(height);
+    format.fmt.pix.bytesperline = static_cast<uint32_t>(width);
+    format.fmt.pix.sizeimage =
+        static_cast<uint32_t>(width) * static_cast<uint32_t>(height) * 3 / 2;
 
     if (ioctl(deviceHandle->fd, VIDIOC_S_FMT, &format) < 0) {
         __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Failed to configure stream");

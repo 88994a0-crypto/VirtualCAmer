@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var setupManager: DeviceSetupManager
     private var decoderMode: DecoderMode = DecoderMode.SOFTWARE
     private var activeDecoderMode: DecoderMode? = null
+    private var frameWriteFailed = false
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -126,8 +127,18 @@ class MainActivity : AppCompatActivity() {
                 "video=${videoSwitch.isChecked}, live=${liveSwitch.isChecked})"
         )
 
+        val deviceExists = setupManager.isDeviceAvailable(devicePath)
+        if (!deviceExists) {
+            updateStatus("Virtual camera not available at $devicePath")
+            stopFrameCapture()
+            bridge.closeDevice()
+            return
+        }
+
         if (!bridge.openDevice(devicePath)) {
             updateStatus("Unable to open $devicePath")
+            stopFrameCapture()
+            return
         }
 
         if (liveSwitch.isChecked && rtmpUrl.isNotBlank()) {
@@ -137,6 +148,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (videoSwitch.isChecked) {
+            frameWriteFailed = false
             startFrameCapture()
         } else {
             stopFrameCapture()
@@ -222,7 +234,14 @@ class MainActivity : AppCompatActivity() {
             bitmap,
             { result ->
                 if (result == android.view.PixelCopy.SUCCESS) {
-                    frameWriter.writeBitmap(bitmap)
+                    val success = frameWriter.writeBitmap(bitmap)
+                    if (!success && !frameWriteFailed) {
+                        frameWriteFailed = true
+                        updateStatus("Failed to forward frame to virtual camera")
+                    } else if (success && frameWriteFailed) {
+                        frameWriteFailed = false
+                        updateStatus("Virtual camera streaming recovered")
+                    }
                 }
                 bitmap.recycle()
             },

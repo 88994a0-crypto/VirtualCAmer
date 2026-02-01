@@ -31,7 +31,22 @@ class DeviceSetupManager(
         if (path.isBlank()) {
             return false
         }
-        return File(path).exists()
+        val file = File(path)
+        return file.exists() && file.canRead() && file.canWrite()
+    }
+
+    fun getDeviceIssue(path: String): String? {
+        if (path.isBlank()) {
+            return "Device path is empty"
+        }
+        val file = File(path)
+        if (!file.exists()) {
+            return "Virtual camera not found at $path"
+        }
+        if (!file.canRead() || !file.canWrite()) {
+            return "Insufficient permissions for $path"
+        }
+        return null
     }
 
     private fun runAsRoot(command: String): Boolean {

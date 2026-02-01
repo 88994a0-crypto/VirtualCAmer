@@ -127,16 +127,16 @@ class MainActivity : AppCompatActivity() {
                 "video=${videoSwitch.isChecked}, live=${liveSwitch.isChecked})"
         )
 
-        val deviceExists = setupManager.isDeviceAvailable(devicePath)
-        if (!deviceExists) {
-            updateStatus("Virtual camera not available at $devicePath")
+        val deviceIssue = setupManager.getDeviceIssue(devicePath)
+        if (deviceIssue != null) {
+            updateStatus(deviceIssue)
             stopFrameCapture()
             bridge.closeDevice()
             return
         }
 
         if (!bridge.openDevice(devicePath)) {
-            updateStatus("Unable to open $devicePath")
+            updateStatus("Unable to open $devicePath (check permissions and path)")
             stopFrameCapture()
             return
         }

@@ -10,6 +10,7 @@ struct DeviceHandle {
     int fd;
     int width;
     int height;
+    size_t expected_size;
 };
 
 constexpr const char *kLogTag = "VirtualCamera";
@@ -37,7 +38,7 @@ Java_com_example_virtualcamer_VirtualCameraBridge_nativeOpenDevice(
         return 0L;
     }
 
-    auto *handle = new DeviceHandle{fd, 0, 0};
+    auto *handle = new DeviceHandle{fd, 0, 0, 0};
     return reinterpret_cast<jlong>(handle);
 }
 
@@ -74,6 +75,7 @@ Java_com_example_virtualcamer_VirtualCameraBridge_nativeConfigureStream(
 
     deviceHandle->width = width;
     deviceHandle->height = height;
+    deviceHandle->expected_size = format.fmt.pix.sizeimage;
     return JNI_TRUE;
 }
 
@@ -89,6 +91,13 @@ Java_com_example_virtualcamer_VirtualCameraBridge_nativeWriteFrame(
     }
 
     auto *deviceHandle = reinterpret_cast<DeviceHandle *>(handle);
+    if (deviceHandle->expected_size != 0 &&
+        static_cast<size_t>(length) != deviceHandle->expected_size) {
+        __android_log_print(ANDROID_LOG_ERROR, kLogTag,
+                            "Frame size mismatch (expected %zu, got %d)",
+                            deviceHandle->expected_size, length);
+        return JNI_FALSE;
+    }
     void *data = env->GetDirectBufferAddress(buffer);
     if (data == nullptr) {
         return JNI_FALSE;

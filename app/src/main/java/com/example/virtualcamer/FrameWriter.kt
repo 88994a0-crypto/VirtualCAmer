@@ -6,29 +6,36 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
+data class FrameWriteResult(val success: Boolean, val message: String? = null)
+
 class FrameWriter(private val bridge: VirtualCameraBridge) {
-    fun writeBitmap(bitmap: Bitmap): Boolean {
+    fun writeBitmap(bitmap: Bitmap): FrameWriteResult {
         val adjusted = ensureEvenDimensions(bitmap)
         if (adjusted == null) {
-            Log.e("VirtualCamera", "Invalid bitmap dimensions: ${bitmap.width}x${bitmap.height}")
-            return false
+            val message = "Invalid bitmap dimensions: ${bitmap.width}x${bitmap.height}"
+            Log.e("VirtualCamera", message)
+            return FrameWriteResult(false, message)
         }
         return try {
             val buffer = convertArgbToI420(adjusted)
             if (buffer == null) {
-                Log.e("VirtualCamera", "Failed to convert frame to I420")
-                return false
+                val message = "Failed to convert ARGB frame to YUV420"
+                Log.e("VirtualCamera", message)
+                return FrameWriteResult(false, message)
             }
             if (!bridge.configureStream(adjusted.width, adjusted.height)) {
-                Log.e("VirtualCamera", "Failed to configure stream ${adjusted.width}x${adjusted.height}")
-                return false
+                val message = "Failed to configure stream ${adjusted.width}x${adjusted.height}"
+                Log.e("VirtualCamera", message)
+                return FrameWriteResult(false, message)
             }
             buffer.rewind()
             val success = bridge.writeFrame(buffer)
             if (!success) {
-                Log.e("VirtualCamera", "Failed to write frame to virtual camera")
+                val message = "Failed to write frame to virtual camera"
+                Log.e("VirtualCamera", message)
+                return FrameWriteResult(false, message)
             }
-            success
+            FrameWriteResult(true)
         } finally {
             if (adjusted !== bitmap) {
                 adjusted.recycle()

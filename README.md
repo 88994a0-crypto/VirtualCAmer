@@ -11,23 +11,13 @@ controls for audio, video, live streaming, and decoder mode.
 - Shows the chosen configuration in a status block.
 
 ## Virtual camera setup (rooted devices/emulators)
-The app expects a v4l2loopback device to exist at the device path you enter. On a rooted emulator or
-device, install and create the virtual camera before launching the app:
+The app now attempts to install the `v4l2loopback` module automatically on startup using `su`. It also
+auto-selects the first available `/dev/video*` path (preferring `/dev/video0`). You can still override
+the detected device path in the UI if you need to.
 
-```bash
-su
-modprobe v4l2loopback devices=1 video_nr=0 card_label="VirtualCam" exclusive_caps=1
-```
-
-Confirm the device exists:
-
-```bash
-ls -l /dev/video0
-```
-
-When the app is running, enter the device path (for example, `/dev/video0`) in the UI. The app will try
-to open the device and forward decoded frames into it. You still need a native bridge that converts the
-decoded frames into the raw format expected by v4l2loopback.
+When the app is running, it opens the device and forwards decoded frames into it through a JNI bridge.
+The native module currently performs a raw write of ARGB frames into the device file, so the output
+format may need refinement to match your v4l2loopback expectations.
 
 ## Build
 Use Android Studio or Gradle:

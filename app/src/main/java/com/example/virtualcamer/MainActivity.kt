@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var serverInput: EditText
     private lateinit var streamKeyInput: EditText
     private lateinit var devicePathInput: EditText
+    private lateinit var virtualCameraSwitch: SwitchMaterial
     private lateinit var audioSwitch: SwitchMaterial
     private lateinit var videoSwitch: SwitchMaterial
     private lateinit var liveSwitch: SwitchMaterial
@@ -76,6 +77,7 @@ class MainActivity : AppCompatActivity() {
         serverInput = findViewById(R.id.serverInput)
         streamKeyInput = findViewById(R.id.streamKeyInput)
         devicePathInput = findViewById(R.id.devicePathInput)
+        virtualCameraSwitch = findViewById(R.id.virtualCameraSwitch)
         audioSwitch = findViewById(R.id.audioSwitch)
         videoSwitch = findViewById(R.id.videoSwitch)
         liveSwitch = findViewById(R.id.liveSwitch)
@@ -119,7 +121,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applySettings() {
-        setupManager.ensureLoopbackInstalled()
+        if (virtualCameraSwitch.isChecked) {
+            setupManager.ensureLoopbackInstalled()
+        }
         val serverUrl = serverInput.text.toString().trim()
         val streamKey = streamKeyInput.text.toString().trim()
         val devicePath = devicePathInput.text.toString().trim().ifEmpty {
@@ -136,7 +140,7 @@ class MainActivity : AppCompatActivity() {
         val rtmpUrl = buildRtmpUrl(serverUrl, streamKey)
         updateStatus(
             "Applying settings for $rtmpUrl (decoder=${decoderMode.label}, audio=${audioSwitch.isChecked}, " +
-                "video=${videoSwitch.isChecked}, live=${liveSwitch.isChecked})"
+                "video=${videoSwitch.isChecked}, live=${liveSwitch.isChecked}, virtual=${virtualCameraSwitch.isChecked})"
         )
 
         if (!ensurePermissionsGranted()) {
@@ -145,26 +149,30 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val deviceIssue = setupManager.getDeviceIssue(devicePath)
-        if (deviceIssue != null) {
-            val available = setupManager.listDevicePaths()
-            val detail = if (available.isNotEmpty()) {
-                "Available devices: ${available.joinToString()}"
-            } else {
-                "No /dev/video* devices found"
+        if (virtualCameraSwitch.isChecked) {
+            val deviceIssue = setupManager.getDeviceIssue(devicePath)
+            if (deviceIssue != null) {
+                val available = setupManager.listDevicePaths()
+                val detail = if (available.isNotEmpty()) {
+                    "Available devices: ${available.joinToString()}"
+                } else {
+                    "No /dev/video* devices found"
+                }
+                updateStatus("$deviceIssue. $detail")
+                stopFrameCapture()
+                stopPlayback()
+                bridge.closeDevice()
+                return
             }
-            updateStatus("$deviceIssue. $detail")
-            stopFrameCapture()
-            stopPlayback()
-            bridge.closeDevice()
-            return
-        }
 
-        if (!bridge.openDevice(devicePath)) {
-            updateStatus("Unable to open $devicePath (virtual camera creation failed)")
-            stopFrameCapture()
-            stopPlayback()
-            return
+            if (!bridge.openDevice(devicePath)) {
+                updateStatus("Unable to open $devicePath (virtual camera creation failed)")
+                stopFrameCapture()
+                stopPlayback()
+                return
+            }
+        } else {
+            bridge.closeDevice()
         }
 
         val rtmpIssue = if (liveSwitch.isChecked) validateRtmpInputs(serverUrl, streamKey) else null
@@ -177,11 +185,14 @@ class MainActivity : AppCompatActivity() {
             stopPlayback()
         }
 
-        if (videoSwitch.isChecked) {
+        if (videoSwitch.isChecked && virtualCameraSwitch.isChecked) {
             frameWriteFailed = false
             startFrameCapture()
         } else {
             stopFrameCapture()
+            if (videoSwitch.isChecked && !virtualCameraSwitch.isChecked) {
+                updateStatus("Virtual camera injection disabled; preview only")
+            }
         }
     }
 

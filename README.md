@@ -46,10 +46,16 @@ the device path unchanged so you can retry with a manually provisioned virtual c
    selected in camera-aware apps.
 
 ## Build
-Use Android Studio (Arctic Fox or newer) or Gradle:
+Use Android Studio (Arctic Fox or newer) or the Gradle wrapper:
 
 ```bash
 ./gradlew assembleDebug
 ```
 
 The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Current limitations
+- Requires a rooted device/emulator with `v4l2loopback` available to create `/dev/video*` nodes.
+- Only RTMP playback is supported as the input source.
+- Video forwarding is capped to a low frame rate (the app currently throttles to ~15 fps).
+- Audio is played back on the device only; it is not forwarded into the virtual camera device.

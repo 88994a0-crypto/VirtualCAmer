@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var videoPreview: TextureView
 
-    private val rootExecutor = Executors.newSingleThreadExecutor()
+    private val deviceExecutor = Executors.newSingleThreadExecutor()
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val frameThread = HandlerThread("FrameCapture")
@@ -91,8 +91,8 @@ class MainActivity : AppCompatActivity() {
         frameThread.start()
         frameHandler = Handler(frameThread.looper)
 
-        setupManager = DeviceSetupManager(rootExecutor) { message -> updateStatus(message) }
-        setupManager.ensureLoopbackInstalled()
+        setupManager = DeviceSetupManager(deviceExecutor) { message -> updateStatus(message) }
+        setupManager.reportObsVirtualCameraStatus()
         setupManager.detectDevicePath()?.let { devicePathInput.setText(it) }
 
         requestRuntimePermissions()
@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         player = null
         bridge.closeDevice()
         frameThread.quitSafely()
-        rootExecutor.shutdown()
+        deviceExecutor.shutdown()
         ioExecutor.shutdown()
     }
 
@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun applySettings() {
         if (virtualCameraSwitch.isChecked) {
-            setupManager.ensureLoopbackInstalled()
+            setupManager.reportObsVirtualCameraStatus()
         }
         val serverUrl = serverInput.text.toString().trim()
         val streamKey = streamKeyInput.text.toString().trim()
@@ -162,7 +162,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     "No /dev/video* devices found"
                 }
-                updateStatus("$deviceIssue. $detail")
+                updateStatus("$deviceIssue. $detail. Ensure OBS Virtual Camera is enabled.")
                 stopFrameCapture()
                 stopPlayback()
                 bridge.closeDevice()

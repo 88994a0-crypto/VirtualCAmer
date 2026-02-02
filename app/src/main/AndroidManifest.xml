@@ -1,15 +1,33 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Camera and audio permissions -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    
+    <!-- Network permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.CAMERA" />
+    
+    <!-- Foreground service permissions (Android 9+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    
+    <!-- Android 12+ specific: Foreground service type for camera -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    
+    <!-- Wake lock to keep RTMP connection alive -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <!-- Post notifications for foreground service (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+    <!-- Query all packages to allow targeting any camera app -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
     
     <application
         android:allowBackup="true"
         android:label="VirtualCAmer"
         android:supportsRtl="true"
+        android:requestLegacyExternalStorage="true"
         android:theme="@style/Theme.VirtualCAmer">
         
         <!-- Xposed Module Metadata -->
@@ -18,18 +36,49 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Inject RTMP stream as camera feed in Instagram, TikTok, Snapchat, and more" />
+            android:value="Inject RTMP stream as camera feed in Camera, Chrome, and other apps (Android 11+ compatible)" />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
         
+        <!-- Main configuration activity -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- ContentProvider for cross-process communication (Android 11+ compatible) -->
+        <provider
+            android:name=".provider.ConfigProvider"
+            android:authorities="${applicationId}.config"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:readPermission="${applicationId}.READ_CONFIG"
+            android:writePermission="${applicationId}.WRITE_CONFIG">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        
+        <!-- Foreground service for maintaining RTMP connection -->
+        <service
+            android:name=".RtmpService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="camera">
+        </service>
     </application>
+    
+    <!-- Custom permissions for config provider -->
+    <permission
+        android:name="${applicationId}.READ_CONFIG"
+        android:protectionLevel="signature" />
+    <permission
+        android:name="${applicationId}.WRITE_CONFIG"
+        android:protectionLevel="signature" />
 </manifest>

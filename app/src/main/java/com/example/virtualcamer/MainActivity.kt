@@ -97,6 +97,10 @@ class MainActivity : AppCompatActivity() {
 
         requestRuntimePermissions()
 
+        audioSwitch.setOnCheckedChangeListener { _, isChecked ->
+            updateAudioOutput(isChecked)
+        }
+
         connectButton.setOnClickListener { applySettings() }
     }
 
@@ -183,6 +187,9 @@ class MainActivity : AppCompatActivity() {
             startPlayback(rtmpUrl)
         } else {
             stopPlayback()
+            if (!liveSwitch.isChecked) {
+                updateStatus("Live streaming disabled")
+            }
         }
 
         if (videoSwitch.isChecked && virtualCameraSwitch.isChecked) {
@@ -192,6 +199,8 @@ class MainActivity : AppCompatActivity() {
             stopFrameCapture()
             if (videoSwitch.isChecked && !virtualCameraSwitch.isChecked) {
                 updateStatus("Virtual camera injection disabled; preview only")
+            } else if (!videoSwitch.isChecked) {
+                updateStatus("Video disabled")
             }
         }
     }
@@ -242,6 +251,7 @@ class MainActivity : AppCompatActivity() {
                 .build()
 
         playerInstance.setAudioAttributes(audioAttributes, audioSwitch.isChecked)
+        updateAudioOutput(audioSwitch.isChecked)
         playerInstance.setVideoTextureView(videoPreview)
         playerInstance.setMediaItem(MediaItem.fromUri(rtmpUrl))
         playerInstance.prepare()
@@ -259,11 +269,20 @@ class MainActivity : AppCompatActivity() {
                 2000
             )
             .build()
-        val renderersFactory = DefaultRenderersFactory(this).setMediaCodecSelector { mimeType, requiresSecure, requiresTunneling ->
-            val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecure, requiresTunneling)
-            when (mode) {
-                DecoderMode.SOFTWARE -> infos.filter { it.isSoftwareOnly }.ifEmpty { infos }
-                DecoderMode.HARDWARE -> infos.filter { it.isHardwareAccelerated }.ifEmpty { infos }
+        val renderersFactory = DefaultRenderersFactory(this).apply {
+            setExtensionRendererMode(
+                if (mode == DecoderMode.SOFTWARE) {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                } else {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                }
+            )
+            setMediaCodecSelector { mimeType, requiresSecure, requiresTunneling ->
+                val infos = MediaCodecUtil.getDecoderInfos(mimeType, requiresSecure, requiresTunneling)
+                when (mode) {
+                    DecoderMode.SOFTWARE -> infos.filter { it.isSoftwareOnly }.ifEmpty { infos }
+                    DecoderMode.HARDWARE -> infos.filter { it.isHardwareAccelerated }.ifEmpty { infos }
+                }
             }
         }
         return ExoPlayer.Builder(this, renderersFactory)
@@ -333,6 +352,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateAudioOutput(enabled: Boolean) {
+        player?.volume = if (enabled) 1f else 0f
+    }
+
     private fun ensurePermissionsGranted(): Boolean {
         val missing = listOf(
             Manifest.permission.RECORD_AUDIO,
@@ -374,7 +397,13 @@ class MainActivity : AppCompatActivity() {
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
                 Player.STATE_BUFFERING -> updateStatus("Buffering RTMP stream...")
-                Player.STATE_READY -> updateStatus("RTMP stream ready")
+                Player.STATE_READY -> {
+                    if (videoSwitch.isChecked && virtualCameraSwitch.isChecked) {
+                        updateStatus("RTMP stream ready")
+                    } else {
+                        updateStatus("RTMP stream ready (preview only)")
+                    }
+                }
                 Player.STATE_ENDED -> updateStatus("RTMP stream ended")
                 Player.STATE_IDLE -> updateStatus("RTMP stream idle")
             }

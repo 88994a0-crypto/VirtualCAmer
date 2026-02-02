@@ -1,21 +1,28 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
     <application
         android:allowBackup="true"
         android:label="VirtualCAmer"
         android:supportsRtl="true"
         android:theme="@style/Theme.VirtualCAmer">
+        
+        <!-- Xposed Module Metadata -->
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Inject RTMP stream as camera feed" />
+            android:value="Inject RTMP stream as camera feed in Instagram, TikTok, Snapchat, and more" />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
+        
         <activity
             android:name=".MainActivity"
             android:exported="true">

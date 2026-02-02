@@ -1,57 +1,211 @@
-# VirtualCAmer
+# VirtualCAmer - RTMP Camera Injector for Android
 
-This project provides an Android APK starter that lets you configure an RTMP endpoint and toggle
-controls for audio, video, live streaming, and decoder mode while forwarding the decoded frames to
-an OBS virtual camera device (for example, `/dev/video0`).
+**An Xposed/LSPosed module that replaces Android camera feeds with RTMP streams in real-time.**
 
-## What this app does today
-- Collects RTMP server URL + stream key.
-- Accepts an OBS virtual camera device path (for example, `/dev/video0`).
-- Uses ExoPlayer with the FFmpeg decoder extension for software decoding or hardware codecs for
-  accelerated decoding.
-- Provides switches for audio, video, and live streaming.
-- Provides a soft/hard decoder mode selector.
-- Shows status updates (buffering, ready, errors) in the UI.
+Perfect for streaming pre-recorded content, desktop captures, or remote camera feeds to Instagram, TikTok, Snapchat, and other social media apps.
 
-## Virtual camera setup (OBS)
-The app expects OBS (latest version with the built-in Virtual Camera output) to be running and the
-Virtual Camera started on the host. It auto-selects the first available `/dev/video*` path (preferring
-`/dev/video0`). You can still override the detected device path in the UI if you need to.
+---
 
-When the app is running, it opens the device and forwards decoded frames into it through a JNI bridge.
-Frames captured from ExoPlayer are converted from ARGB into planar YUV420 (I420) in Kotlin before they
-are written to the virtual camera. The native module validates the expected frame size.
+## ✨ Features
 
-## Android 11/12 compatibility notes
-- Android 11 (API 30) and Android 12 (API 31) are supported because the app targets API 34 while
-  remaining compatible with API 24+.
-- OBS must be running with Virtual Camera enabled so the `/dev/video*` node exists before the app
-  starts forwarding frames.
-- The FFmpeg decoder extension ships as part of the build dependencies. Select **Soft decoding** in
-  the UI to prefer FFmpeg-based software decoding. **Hard decoding** forces MediaCodec hardware
-  decoders.
+- ✅ **Complete RTMP Streaming** - Uses FFmpeg/JavaCV for professional-grade RTMP stream decoding
+- ✅ **Multi-API Support** - Hooks Camera, Camera2, and CameraX APIs for maximum app compatibility
+- ✅ **Smart Frame Conversion** - Automatic YUV/RGB conversion and resizing to match camera expectations
+- ✅ **Performance Optimized** - 60-frame buffer, thread-safe operations, minimal CPU usage
+- ✅ **Auto-Reconnection** - Handles network interruptions gracefully with exponential backoff
+- ✅ **Real-time Preview** - ExoPlayer-based preview in configuration app
+- ✅ **Front/Back Camera Selection** - Choose which camera to replace
+- ✅ **Easy Configuration** - Simple UI for RTMP URL and camera selection
 
-## How to use
-1. Launch OBS (latest version) and start the **Virtual Camera** output.
-2. Launch the app and enter the RTMP server URL and stream key for the **incoming** stream.
-3. Confirm the OBS virtual camera device path (for example, `/dev/video0`).
-4. Toggle **Audio** to enable audio playback. Toggle **Video** to enable frame forwarding to the
-   virtual camera. Toggle **Live streaming** to start/stop the RTMP playback session.
-5. Choose **Soft decoding** (FFmpeg) or **Hard decoding** (MediaCodec) and tap **Apply settings**.
-6. Watch the status text. When it says **RTMP stream ready**, the virtual camera is live and can be
-   selected in camera-aware apps.
+---
 
-## Build
-Use Android Studio (Arctic Fox or newer) or the Gradle wrapper:
+## 📱 Supported Apps
+
+Out of the box support for:
+
+- Instagram (Stories, Reels, Live)
+- TikTok
+- Snapchat
+- WhatsApp Video Calls
+- Zoom
+- Discord
+- Facebook (+ Messenger)
+- YouTube Creator
+- Twitter/X
+- LinkedIn
+- Skype
+- Google Meet
+- Microsoft Teams
+- WeChat
+- Viber
+- Google Duo
+
+**Add custom apps** by editing `xposed_scope`
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+
+- Rooted Android device/emulator
+- LSPosed framework installed
+- RTMP server (local or remote)
+
+### 2. Install
 
 ```bash
+adb install VirtualCAmer.apk
+```
+
+### 3. Enable in LSPosed
+
+- Open LSPosed Manager → Modules
+- Enable "VirtualCAmer"
+- Reboot device
+
+### 4. Configure
+
+- Open VirtualCAmer app
+- Enter RTMP URL: `rtmp://10.0.2.2:1935/live/stream`
+- Select camera (Front/Back)
+- Enable injection
+- Connect
+
+### 5. Test
+
+- Open Instagram/TikTok
+- Start camera
+- Your RTMP stream appears! 🎉
+
+---
+
+## 🎥 RTMP Server Setup
+
+### Quick Setup (Docker)
+
+```bash
+docker run -d -p 1935:1935 tiangolo/nginx-rtmp
+```
+
+### Stream from FFmpeg
+
+```bash
+ffmpeg -re -i video.mp4 -c copy -f flv rtmp://localhost/live/stream
+```
+
+### Stream from OBS
+
+1. Settings → Stream
+2. Custom: `rtmp://localhost/live`
+3. Stream Key: `stream`
+4. Start Streaming
+
+### For Android Emulator
+
+Use `10.0.2.2` instead of `localhost`:
+```
+rtmp://10.0.2.2:1935/live/stream
+```
+
+---
+
+## 🔧 Troubleshooting
+
+### No Video / Black Screen
+
+```bash
+# Check logs
+adb logcat | grep -E "VirtualCAmer|RTMP"
+
+# Verify RTMP stream
+ffplay rtmp://your-url
+
+# Checklist
+✓ LSPosed module enabled for app
+✓ Device rebooted after enabling
+✓ Injection toggle is ON
+✓ RTMP server is running
+✓ Network accessible
+```
+
+### Connection Failed
+
+- Use `10.0.2.2` for emulator (not `localhost`)
+- Check firewall (port 1935)
+- Verify URL format: `rtmp://host:port/app/key`
+
+### Low FPS / Lag
+
+- Reduce stream quality (720p → 480p)
+- Lower bitrate (2000 → 1000 kbps)
+- Check device CPU usage
+
+---
+
+## 📊 Optimal Settings
+
+```
+Resolution: 1280x720
+FPS: 30
+Codec: H.264 (baseline)
+Bitrate: 2000 kbps
+Format: FLV
+```
+
+---
+
+## 🛠️ Development
+
+### Build
+
+```bash
+git clone https://github.com/yourusername/VirtualCAmer.git
+cd VirtualCAmer
 ./gradlew assembleDebug
 ```
 
-The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
+### Project Structure
 
-## Current limitations
-- OBS Virtual Camera must be started before the app can detect `/dev/video*` nodes.
-- Only RTMP playback is supported as the input source.
-- Video forwarding is capped to a low frame rate (the app currently throttles to ~15 fps).
-- Audio is played back on the device only; it is not forwarded into the virtual camera device.
+```
+app/src/main/java/com/example/virtualcamer/
+├── MainActivity.kt              # UI
+└── xposed/
+    ├── XposedInit.kt           # Entry point
+    ├── CameraHook.kt           # Legacy API
+    ├── Camera2Hook.kt          # Camera2 API
+    ├── CameraXHook.kt          # CameraX API
+    ├── RtmpStreamReader.kt     # FFmpeg decoder
+    ├── RtmpFrameProvider.kt    # Frame manager
+    ├── FrameBuffer.kt          # Buffering
+    ├── FrameConverter.kt       # Format conversion
+    └── InjectionConfig.kt      # Settings
+```
+
+---
+
+## 🔐 Privacy
+
+- No data collection
+- Fully open source
+- Runs locally
+- No cloud services
+
+---
+
+## 📜 License
+
+MIT License
+
+---
+
+## 🙏 Credits
+
+- LSPosed Team
+- JavaCV/FFmpeg
+- ExoPlayer
+- AOSP
+
+---
+
+**Made with ❤️ for the Android community**
